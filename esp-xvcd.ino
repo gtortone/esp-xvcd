@@ -6,6 +6,7 @@
 #define GPIO_TMS    D5
 
 //#define VERBOSE
+#define MAX_WRITE_SIZE  512
 
 // AP mode:
 const char *ssid = "jtag";
@@ -19,6 +20,10 @@ WiFiServer server(port);
 WiFiClient client;
 
 int jtag_state;
+
+// JTAG buffers
+uint8_t cmd[16];
+uint8_t buffer[1024], result[512];
 
 enum {
 
@@ -135,9 +140,6 @@ void loop() {
         int seen_tlr = 0;
       
         do {
-
-          uint8_t cmd[16];
-          uint8_t buffer[1024], result[512];
       
           if (sread(cmd, 6) != 1)
             goto start;
@@ -178,8 +180,8 @@ void loop() {
             Serial.println("reading data failed\n");
             goto start;
           }
-      
-          memset(result, 0, nr_bytes);
+             
+          memset((uint8_t *)result, 0, nr_bytes);
       
 #ifdef VERBOSE
 
@@ -221,7 +223,7 @@ void loop() {
               digitalWrite(GPIO_TDI, tdi);
               digitalWrite(GPIO_TCK, 1);
               digitalWrite(GPIO_TCK, 0);
-      
+              
               // Track the state.
               jtag_state = jtag_step(jtag_state, tms);
             }

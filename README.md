@@ -16,5 +16,5 @@ ESP8266 implementation of XVC (Xilinx Virtual Cable) protocol based on xvcd (htt
 Start Impact and use xilinx_xvc cable plugin:
 
 ```
-xilinx_xvc host=192.168.0.1:2542 maxpacketsize=1024 disableversioncheck=true
+xilinx_xvc host=192.168.0.1:2542 maxpacketsize=512 disableversioncheck=true
 ```
