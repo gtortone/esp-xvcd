@@ -20,8 +20,8 @@ WiFiClient client;
 
 int jtag_state;
 
-enum
-{
+enum {
+
   test_logic_reset, run_test_idle,
 
   select_dr_scan, capture_dr, shift_dr,
@@ -33,10 +33,10 @@ enum
   num_states
 };
 
-int jtag_step(int state, int tms)
-{
-  const int next_state[num_states][2] =
-  {
+int jtag_step(int state, int tms) {
+
+  const int next_state[num_states][2] = {
+
     [test_logic_reset] = {run_test_idle, test_logic_reset},
     [run_test_idle] = {run_test_idle, select_dr_scan},
 
@@ -60,12 +60,12 @@ int jtag_step(int state, int tms)
   return next_state[state][tms];
 }
 
-int sread(void *target, int len)
-{
+int sread(void *target, int len) {
+
   uint8_t *t = (uint8_t *) target;
 
-  while (len)
-  {
+  while (len) {
+
     int r = client.read(t, len);
     if (r <= 0)
       return r;
@@ -77,7 +77,7 @@ int sread(void *target, int len)
 }
 
 void setup() {
-//
+
 //  ESP.wdtDisable();
 //  ESP.wdtEnable(WDTO_8S);
 
@@ -129,21 +129,21 @@ void loop() {
     // read data from the connected client
     if (client.available()) {
 
-      while (client.connected()){
+      while (client.connected()) {
       
         int i;
         int seen_tlr = 0;
       
-        do
-        {
+        do {
+
           uint8_t cmd[16];
           uint8_t buffer[1024], result[512];
       
           if (sread(cmd, 6) != 1)
             goto start;
       
-          if (memcmp(cmd, "shift:", 6))
-          {
+          if (memcmp(cmd, "shift:", 6)) {
+
             cmd[6] = 0;
             Serial.print("invalid cmd ");
             Serial.println((char *)cmd);
@@ -151,8 +151,8 @@ void loop() {
           }
 
           int len;
-          if (sread(&len, 4) != 1)
-          {
+          if (sread(&len, 4) != 1) {
+
             Serial.println("reading length failed\n");
             goto start;
           }
@@ -167,14 +167,14 @@ void loop() {
             Serial.println(nr_bytes);
 #endif
       
-          if (nr_bytes * 2 > sizeof(buffer))
-          {
+          if (nr_bytes * 2 > sizeof(buffer)) {
+
             Serial.println("buffer size exceeded");
             goto start;
           }
       
-          if (sread(buffer, nr_bytes * 2) != 1)
-          {
+          if (sread(buffer, nr_bytes * 2) != 1) {
+
             Serial.println("reading data failed\n");
             goto start;
           }
@@ -205,15 +205,14 @@ void loop() {
           // reading IR/DR which unfortunately sets IR to the read-out IR value.
           // Just ignore these transactions.
       
-          if ((jtag_state == exit1_ir && len == 5 && buffer[0] == 0x17) || (jtag_state == exit1_dr && len == 4 && buffer[0] == 0x0b))
-          {
+          if ((jtag_state == exit1_ir && len == 5 && buffer[0] == 0x17) || (jtag_state == exit1_dr && len == 4 && buffer[0] == 0x0b)) {
+
 #ifdef VERBOSE
               Serial.print("ignoring bogus jtag state movement in jtag_state ");
               Serial.println(jtag_state);
 #endif
           } else
-            for (i = 0; i < len; ++i)
-            {
+            for (i = 0; i < len; ++i) {
               // Do the actual cycle.
               int tms = !!(buffer[i / 8] & (1 << (i & 7)));
               int tdi = !!(buffer[nr_bytes + i / 8] & (1 << (i & 7)));
@@ -229,8 +228,8 @@ void loop() {
   
           if(client) {
             
-            if(client.write((const uint8_t *)result, nr_bytes) != nr_bytes)
-            {
+            if(client.write((const uint8_t *)result, nr_bytes) != nr_bytes) {
+
               Serial.print("write error - nbytes =");
               Serial.println(nr_bytes);
               goto start;
