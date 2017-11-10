@@ -18,3 +18,8 @@ Start Impact and use xilinx_xvc cable plugin:
 ```
 xilinx_xvc host=192.168.0.1:2542 maxpacketsize=512 disableversioncheck=true
 ```
+
+## Reference
+
+Xilix Virtual Cable protocol reference:
+https://github.com/Xilinx/XilinxVirtualCable
