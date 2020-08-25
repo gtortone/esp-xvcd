@@ -1,5 +1,6 @@
 #include <ESP8266WiFi.h>
 
+// GPIO16, or D0, is not available since it is in its own pin register
 #define GPIO_TDI    D6
 #define GPIO_TDO    D4
 #define GPIO_TCK    D7
@@ -8,11 +9,15 @@
 //#define VERBOSE
 #define MAX_WRITE_SIZE  512
 
-// AP mode:
+#define XVCD_AP_MODE
+#define XVCD_STATIC_IP
+
+// AP mode or STA mode:
 const char *ssid = "jtag";
 const char *pw = "pippo123";
 
 IPAddress ip(192, 168, 0, 1);
+IPAddress gateway(192, 168, 0, 1);
 IPAddress netmask(255, 255, 255, 0);
 const int port = 2542;
 
@@ -38,32 +43,27 @@ enum {
   num_states
 };
 
-int jtag_step(int state, int tms) {
+const int next_state[num_states][2] = {
 
-  const int next_state[num_states][2] = {
+  [test_logic_reset] = {run_test_idle, test_logic_reset},
+  [run_test_idle] = {run_test_idle, select_dr_scan},
 
-    [test_logic_reset] = {run_test_idle, test_logic_reset},
-    [run_test_idle] = {run_test_idle, select_dr_scan},
+  [select_dr_scan] = {capture_dr, select_ir_scan},
+  [capture_dr] = {shift_dr, exit1_dr},
+  [shift_dr] = {shift_dr, exit1_dr},
+  [exit1_dr] = {pause_dr, update_dr},
+  [pause_dr] = {pause_dr, exit2_dr},
+  [exit2_dr] = {shift_dr, update_dr},
+  [update_dr] = {run_test_idle, select_dr_scan},
 
-    [select_dr_scan] = {capture_dr, select_ir_scan},
-    [capture_dr] = {shift_dr, exit1_dr},
-    [shift_dr] = {shift_dr, exit1_dr},
-    [exit1_dr] = {pause_dr, update_dr},
-    [pause_dr] = {pause_dr, exit2_dr},
-    [exit2_dr] = {shift_dr, update_dr},
-    [update_dr] = {run_test_idle, select_dr_scan},
-
-    [select_ir_scan] = {capture_ir, test_logic_reset},
-    [capture_ir] = {shift_ir, exit1_ir},
-    [shift_ir] = {shift_ir, exit1_ir},
-    [exit1_ir] = {pause_ir, update_ir},
-    [pause_ir] = {pause_ir, exit2_ir},
-    [exit2_ir] = {shift_ir, update_ir},
-    [update_ir] = {run_test_idle, select_dr_scan}
-  };
-
-  return next_state[state][tms];
-}
+  [select_ir_scan] = {capture_ir, test_logic_reset},
+  [capture_ir] = {shift_ir, exit1_ir},
+  [shift_ir] = {shift_ir, exit1_ir},
+  [exit1_ir] = {pause_ir, update_ir},
+  [pause_ir] = {pause_ir, exit2_ir},
+  [exit2_ir] = {shift_ir, update_ir},
+  [update_ir] = {run_test_idle, select_dr_scan}
+};
 
 int sread(void *target, int len) {
 
@@ -81,6 +81,82 @@ int sread(void *target, int len) {
   return 1;
 }
 
+int srcmd(void * target, int maxlen) {
+  uint8_t *t = (uint8_t *) target;
+
+  while (maxlen) {
+    int r = client.read(t, 1);
+    if (r <= 0)
+      return r;
+
+    if (*t == ':') {
+      return 1;
+    }
+
+    t += r;
+    maxlen -= r;
+  }
+
+  return 0;
+}
+
+void ICACHE_RAM_ATTR bit_shift(int len, int nr_bytes) {
+  // result[bp] & (1 << j)
+  int i, j;
+  uint32_t wsbuf, wcbuf;
+  uint8_t *pms, *pdi, *pwr;
+  uint8_t tmsbuf, tdibuf, resbuf;
+  
+  pms = buffer;
+  pdi = buffer + nr_bytes;
+  pwr = result;
+
+  for (i = 0; i < len; ) {
+    tmsbuf = *pms, tdibuf = *pdi;
+    resbuf = 0;
+
+    for (j = 0; i < len && j < 8; i++, j++) {
+      int tms = tmsbuf & 0x01;
+      int tdi = tdibuf & 0x01;
+
+      // Before: read, change, rise, fall
+      // Modifided: change, fall, read, rise
+
+      wsbuf = 0;
+      wcbuf = 1 << GPIO_TCK; // Embed TCK fall here
+
+      if (tms) {
+        wsbuf |= (1 << GPIO_TMS);
+      } else {
+        wcbuf |= (1 << GPIO_TMS);
+      }
+
+      if (tdi) {
+        wsbuf |= (1 << GPIO_TDI);
+      } else {
+        wcbuf |= (1 << GPIO_TDI);
+      }
+      
+      // Change + fall
+      if (wsbuf) GPOS = wsbuf;
+      GPOC = wcbuf;
+      // Read
+      resbuf |= ((GPI & (1<<GPIO_TDO)) >> GPIO_TDO) << j;
+      // Rise
+      GPOS = (1<<GPIO_TCK);
+
+      // Track the state.
+      jtag_state = next_state[jtag_state][tms];
+
+      tmsbuf >>= 1;
+      tdibuf >>= 1;
+    }
+    *pwr = resbuf;
+
+    pms++, pdi++, pwr++;
+  }
+}
+
 void setup() {
 
 //  ESP.wdtDisable();
@@ -93,23 +169,27 @@ void setup() {
   Serial.println();
   Serial.println();
   Serial.println();
-  
+#ifdef XVCD_AP_MODE
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(ip, ip, netmask);
   WiFi.softAP(ssid, pw);
+#else
+#ifdef XVCD_STATIC_IP
+  WiFi.config(ip, gateway, netmask);
+#endif
+  WiFi.begin(ssid, pw);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
 
-//  WiFi.begin(ssid, pw);
-//
-//  while (WiFi.status() != WL_CONNECTED) {
-//    delay(500);
-//    Serial.print(".");
-//  }
-//
-//  Serial.println("");
-//  Serial.println("WiFi connected");  
-//  Serial.println("IP address: ");
-//  Serial.println(WiFi.localIP());
-
+  Serial.println("");
+  Serial.println("WiFi connected");  
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+#endif
+  
   Serial.print("Starting XVC Server on port ");
   Serial.println(port);
 
@@ -136,17 +216,39 @@ void loop() {
 
       while (client.connected()) {
       
-        int i;
         int seen_tlr = 0;
       
         do {
       
-          if (sread(cmd, 6) != 1)
+          if (srcmd(cmd, 8) != 1)
             goto start;
       
-          if (memcmp(cmd, "shift:", 6)) {
+          if (memcmp(cmd, "getinfo:", 8) == 0) {
+#ifdef VERBOSE
+            Serial.write("XVC_info\n");
+#endif
+            client.write("xvcServer_v1.0:")
+            client.print(MAX_WRITE_SIZE)
+            client.write("\n");
+            goto start;
+          }
 
-            cmd[6] = 0;
+          if (memcmp(cmd, "settck:", 7) == 0) {
+#endif
+            Serial.write("XVC_tck\n");
+#endif
+            int ntck;
+            if (sread(&ntck, 4) != 1) {
+              Serial.println("reading tck failed\n");
+              goto start;
+            }
+            // Actually TCK frequency is fixed, but replying a fixed TCK will halt hw_server
+            client.write((const uint8_t *)&ntck, 4);
+            goto start;
+          }
+
+          if (memcmp(cmd, "shift:", 6) != 0) {
+            cmd[15] = '\0';
             Serial.print("invalid cmd ");
             Serial.println((char *)cmd);
             goto start;
@@ -214,19 +316,7 @@ void loop() {
               Serial.println(jtag_state);
 #endif
           } else
-            for (i = 0; i < len; ++i) {
-              // Do the actual cycle.
-              int tms = !!(buffer[i / 8] & (1 << (i & 7)));
-              int tdi = !!(buffer[nr_bytes + i / 8] & (1 << (i & 7)));
-              result[i / 8] |= digitalRead(GPIO_TDO) << (i & 7);
-              digitalWrite(GPIO_TMS, tms);
-              digitalWrite(GPIO_TDI, tdi);
-              digitalWrite(GPIO_TCK, 1);
-              digitalWrite(GPIO_TCK, 0);
-              
-              // Track the state.
-              jtag_state = jtag_step(jtag_state, tms);
-            }
+            bit_shift(len, nr_bytes);
   
           if(client) {
             
