@@ -227,14 +227,14 @@ void loop() {
 #ifdef VERBOSE
             Serial.write("XVC_info\n");
 #endif
-            client.write("xvcServer_v1.0:")
-            client.print(MAX_WRITE_SIZE)
+            client.write("xvcServer_v1.0:");
+            client.print(MAX_WRITE_SIZE);
             client.write("\n");
             goto start;
           }
 
           if (memcmp(cmd, "settck:", 7) == 0) {
-#endif
+#ifdef VERBOSE
             Serial.write("XVC_tck\n");
 #endif
             int ntck;
